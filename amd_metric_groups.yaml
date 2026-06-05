@@ -1,0 +1,163 @@
+# AMD Metric Groups - Complete PerfSpect Structure
+# Based on Intel PerfSpect's AMD pipeline analysis methodology
+
+# AMD Pipeline Analysis - Level 1 (High-Level)
+PipelineL1:
+  backend_bound:
+    description: "Fraction of dispatch slots that remained unused because of backend stalls"
+    rails_impact: "Memory-bound operations, Ruby GC pressure"
+  bad_speculation:
+    description: "Fraction of dispatched ops that did not retire"
+    rails_impact: "Branch misprediction from Ruby method dispatch"
+  frontend_bound:
+    description: "Fraction of dispatch slots that remained unused because the frontend did not supply enough instructions/ops"
+    rails_impact: "Instruction cache misses, Ruby method compilation"
+  retiring:
+    description: "Fraction of dispatch slots used by ops that retired"
+    rails_impact: "Actual useful work - higher is better for Rails"
+  smt_contention:
+    description: "Fraction of dispatch slots that remained unused because the other thread was selected"
+    rails_impact: "SMT interference on multi-threaded Rails apps"
+
+# AMD Pipeline Analysis - Level 2 (Detailed Breakdown)
+PipelineL2:
+  backend_bound_cpu:
+    description: "Fraction of dispatch slots that remained unused because of stalls not related to the memory subsystem"
+    rails_impact: "CPU-bound Rails operations, execution unit contention"
+  backend_bound_memory:
+    description: "Fraction of dispatch slots that remained unused because of stalls due to the memory subsystem"
+    rails_impact: "Memory-bound Rails operations, cache misses, TLB misses"
+  bad_speculation_mispredicts:
+    description: "Fraction of dispatched ops that were flushed due to branch mispredicts"
+    rails_impact: "Ruby dynamic method dispatch efficiency"
+  bad_speculation_pipeline_restarts:
+    description: "Fraction of dispatched ops that were flushed due to pipeline restarts (resyncs)"
+    rails_impact: "Pipeline disruption from exceptions, interrupts"
+  frontend_bound_bandwidth:
+    description: "Fraction of dispatch slots that remained unused because of a bandwidth bottleneck in the frontend"
+    rails_impact: "Decode bottlenecks, op cache bandwidth"
+  frontend_bound_latency:
+    description: "Fraction of dispatch slots that remained unused because of a latency bottleneck in the frontend"
+    rails_impact: "Instruction cache misses, TLB misses"
+  retiring_fastpath:
+    description: "Fraction of dispatch slots used by fastpath ops that retired"
+    rails_impact: "Efficient Rails operations (non-microcode)"
+  retiring_microcode:
+    description: "Fraction of dispatch slots used by microcode ops that retired"
+    rails_impact: "Complex operations requiring microcode"
+
+# Branch Prediction (Critical for Ruby Method Dispatch)
+branch_prediction:
+  branch_misprediction_ratio:
+    description: "Execution-time branch misprediction ratio (non-speculative)"
+    rails_impact: "Ruby method dispatch efficiency - lower is better"
+
+# L1 Data Cache (Ruby Object Access Patterns)
+l1_dcache:
+  all_l1_data_cache_fills:
+    description: "All L1 data cache fills"
+    rails_impact: "Total memory hierarchy activity"
+  l1_data_cache_fills_from_same_ccx:
+    description: "L1 data cache fills from within the same CCX"
+    rails_impact: "Optimal locality for Rails objects (AMD advantage)"
+  l1_data_cache_fills_from_different_ccx:
+    description: "L1 data cache fills from another CCX cache in any NUMA node"
+    rails_impact: "Cross-CCX penalties for Rails objects"
+  l1_data_cache_fills_from_memory:
+    description: "L1 data cache fills from DRAM or MMIO in any NUMA node"
+    rails_impact: "Expensive memory accesses (should be minimized)"
+  l1_demand_data_cache_fills_from_local_l2:
+    description: "L1 demand data cache fills from local L2 cache"
+    rails_impact: "Good cache hierarchy utilization"
+
+# L2 Cache (Object Sharing and Method Cache)
+l2_cache:
+  all_l2_cache_accesses:
+    description: "All L2 cache accesses"
+    rails_impact: "L2 cache activity level"
+  all_l2_cache_hits:
+    description: "All L2 cache hits"
+    rails_impact: "L2 cache efficiency (higher is better)"
+  all_l2_cache_misses:
+    description: "All L2 cache misses"
+    rails_impact: "L2 cache misses (lower is better)"
+  l2_cache_accesses_from_l1_ic_misses:
+    description: "L2 cache accesses from L1 instruction cache misses"
+    rails_impact: "Ruby method cache misses"
+  l2_cache_hits_from_l1_dc_miss:
+    description: "L2 cache hits from L1 data cache misses"
+    rails_impact: "Rails object cache efficiency"
+
+# L3 Cache (Shared Cache Performance)
+l3_cache:
+  l3_cache_accesses:
+    description: "L3 cache accesses"
+    rails_impact: "L3 cache activity level"
+  l3_misses:
+    description: "L3 misses (including cacheline state change requests)"
+    rails_impact: "Expensive L3 misses (should be minimized)"
+  l3_read_miss_latency:
+    description: "Average L3 read miss latency (in core clocks)"
+    rails_impact: "Memory access latency for Rails objects"
+
+# TLB (Virtual Memory Performance for Ruby Heap)
+tlb:
+  l1_dtlb_misses:
+    description: "L1 data TLB misses"
+    rails_impact: "Ruby object virtual memory efficiency"
+  l1_itlb_misses:
+    description: "L1 instruction TLB misses"
+    rails_impact: "Ruby method virtual memory efficiency"
+  l2_dtlb_misses:
+    description: "L2 data TLB misses and data page walks"
+    rails_impact: "Expensive page walks (should be minimized)"
+  all_tlbs_flushed:
+    description: "All TLBs flushed"
+    rails_impact: "TLB flush overhead"
+
+# Memory Controller (DDR5 Bandwidth on M8A instances)
+memory_controller:
+  umc_mem_bandwidth:
+    description: "Estimated combined memory bandwidth"
+    rails_impact: "Total memory bandwidth utilization"
+  umc_mem_read_bandwidth:
+    description: "Estimated memory read bandwidth"
+    rails_impact: "Memory read bandwidth for Rails objects"
+  umc_mem_write_bandwidth:
+    description: "Estimated memory write bandwidth"
+    rails_impact: "Memory write bandwidth for Rails objects"
+  umc_data_bus_utilization:
+    description: "Memory controller data bus utilization"
+    rails_impact: "DDR5 memory efficiency on M8A instances"
+
+# Data Fabric (AMD's Interconnect - NUMA Performance)
+data_fabric:
+  dram_read_data_for_local_processor:
+    description: "DRAM read data for local processor"
+    rails_impact: "Local NUMA node efficiency"
+  dram_read_data_for_remote_processor:
+    description: "DRAM read data for remote processor"
+    rails_impact: "Remote NUMA penalties (should be minimized)"
+  local_socket_outbound_data_from_all_links:
+    description: "Outbound data from all links (local socket)"
+    rails_impact: "Inter-socket communication overhead"
+
+# Rails-Specific Metric Priorities
+rails_optimization_targets:
+  critical:
+    - branch_misprediction_ratio  # Ruby method dispatch
+    - backend_bound_memory       # Memory-bound Rails operations
+    - l1_data_cache_fills_from_same_ccx  # AMD CCX locality advantage
+    - l2_cache_hits_from_l1_dc_miss     # Object cache efficiency
+    - l1_dtlb_misses            # Ruby heap virtual memory
+
+  important:
+    - retiring_fastpath         # Efficient Rails operations
+    - frontend_bound_latency    # Instruction cache efficiency
+    - l3_read_miss_latency     # Memory access latency
+    - umc_mem_bandwidth        # DDR5 memory utilization
+
+  optimization_opportunities:
+    - bad_speculation_mispredicts    # Improve method dispatch
+    - l1_data_cache_fills_from_different_ccx  # Reduce cross-CCX traffic
+    - dram_read_data_for_remote_processor    # Improve NUMA locality

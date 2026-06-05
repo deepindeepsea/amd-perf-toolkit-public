@@ -1,0 +1,7 @@
+
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated HTML analysis reports
+amd_analysis_*.html
