@@ -93,9 +93,14 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 """
 
-def get_db() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
+def get_db(db_path: "Path | str | None" = None) -> sqlite3.Connection:
+    # db_path lets a caller open a specific store instead of the global DB_PATH
+    # (set from $TOPDOWN_DB_PATH). Used by cross-DB compare so a run in one
+    # machine's store can be compared against a run in another's without first
+    # consolidating them into a single file.
+    path = Path(db_path) if db_path else DB_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     return conn
@@ -149,8 +154,9 @@ def ingest_run(ts: str, process: str, duration_s: float, host: str,
     conn.close()
     return run_id
 
-def load_runs(label_filter: dict | None = None, limit: int = 50) -> list[dict]:
-    conn = get_db()
+def load_runs(label_filter: dict | None = None, limit: int = 50,
+              db_path: "Path | str | None" = None) -> list[dict]:
+    conn = get_db(db_path)
     rows = conn.execute("SELECT * FROM runs ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
     conn.close()
     result = []
@@ -164,8 +170,8 @@ def load_runs(label_filter: dict | None = None, limit: int = 50) -> list[dict]:
         result.append(d)
     return result
 
-def load_run_by_id(run_id: str) -> dict | None:
-    conn = get_db()
+def load_run_by_id(run_id: str, db_path: "Path | str | None" = None) -> dict | None:
+    conn = get_db(db_path)
     row = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
     conn.close()
     if not row: return None
@@ -175,8 +181,46 @@ def load_run_by_id(run_id: str) -> dict | None:
     d["raw_events"] = json.loads(d["raw_events"] or "{}")
     return d
 
-def _best_run(label_filter: dict) -> dict | None:
-    runs = load_runs(label_filter, limit=1)
+RUN_EXPORT_FORMAT = "amd_topdown/run-export/v1"
+
+def export_run(run_id: str, db_path: "Path | str | None" = None) -> dict | None:
+    run = load_run_by_id(run_id, db_path)
+    if not run:
+        return None
+    return {
+        "_format":    RUN_EXPORT_FORMAT,
+        "id":         run["id"],
+        "ts":         run["ts"],
+        "process":    run["process"],
+        "duration_s": run["duration_s"],
+        "host":       run["host"],
+        "cpu_model":  run["cpu_model"],
+        "cpu_family": run["cpu_family"],
+        "metrics":    run["metrics"],
+        "labels":     run["labels"],
+        "raw_events": run["raw_events"],
+    }
+
+def import_run(blob: dict, db_path: "Path | str | None" = None,
+               new_id: bool = False) -> str:
+    fmt = blob.get("_format")
+    if fmt not in (RUN_EXPORT_FORMAT, None):
+        raise ValueError(f"unrecognized export format: {fmt!r}")
+    rid = uuid.uuid4().hex[:12] if new_id else blob["id"]
+    conn = get_db(db_path)
+    conn.execute(
+        "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (rid, blob["ts"], blob.get("process", ""), blob.get("duration_s", 0.0),
+         blob.get("host", ""), blob.get("cpu_model", ""), blob.get("cpu_family", ""),
+         json.dumps(blob.get("metrics", {})), json.dumps(blob.get("labels", {})),
+         json.dumps(blob.get("raw_events", {}))),
+    )
+    conn.commit()
+    conn.close()
+    return rid
+
+def _best_run(label_filter: dict, db_path: "Path | str | None" = None) -> dict | None:
+    runs = load_runs(label_filter, limit=1, db_path=db_path)
     return runs[0] if runs else None
 
 def _cpu_info() -> tuple[str, str]:
@@ -1437,6 +1481,37 @@ def cmd_ingest(args):
         print(f"  Now try:  amd_topdown.py list --label source=corpus")
         print(f"            amd_topdown.py query --funnel --label suite=results_m8a")
 
+def cmd_export(args):
+    blobs = []
+    for rid in args.ids:
+        b = export_run(rid, args.db)
+        if not b:
+            where = f" in {args.db}" if args.db else ""
+            print(f"  Run {rid} not found{where}", file=sys.stderr); sys.exit(1)
+        blobs.append(b)
+    out = blobs if len(blobs) != 1 else blobs[0]
+    text = json.dumps(out, indent=2)
+    if args.output and args.output != "-":
+        Path(args.output).write_text(text)
+        print(f"  Exported {len(blobs)} run(s) → {args.output}", file=sys.stderr)
+    else:
+        print(text)
+
+def cmd_import(args):
+    total = 0
+    for p in args.files:
+        data = json.loads(Path(p).read_text())
+        items = data if isinstance(data, list) else [data]
+        for blob in items:
+            rid = import_run(blob, args.db, new_id=args.new_id)
+            dest = f" → {args.db}" if args.db else ""
+            print(f"    ✓ imported run {rid}  ({blob.get('host','?')}, "
+                  f"fam {blob.get('cpu_family','?')}){dest}")
+            total += 1
+    print(f"\n  Imported {total} run(s).")
+    if args.db:
+        print(f"  Now try:  amd_topdown.py list --db {args.db}")
+
 def cmd_list(args):
     label_filter = {}
     for lv in (args.label or []):
@@ -1444,7 +1519,8 @@ def cmd_list(args):
             k, v = lv.split("=", 1)
             label_filter[k.strip()] = v.strip()
 
-    runs = load_runs(label_filter or None, limit=args.limit)
+    runs = load_runs(label_filter or None, limit=args.limit,
+                     db_path=getattr(args, "db", None))
     if not runs:
         print("  No runs found. Run: amd_topdown.py collect ...")
         return
@@ -1506,34 +1582,42 @@ def cmd_query(args):
             print()
 
 def cmd_compare(args):
+    # --db sets the store for BOTH runs; --db-a/--db-b override per-run so two
+    # runs living in different machines' stores can be compared directly,
+    # without first consolidating them into a single SQLite file.
+    shared_db = getattr(args, "db", None)
+    db_a = getattr(args, "db_a", None) or shared_db
+    db_b = getattr(args, "db_b", None) or shared_db
     # Resolve run A
     if args.id_a:
-        run_a = load_run_by_id(args.id_a)
+        run_a = load_run_by_id(args.id_a, db_a)
         label_a = args.id_a[:8]
         if not run_a:
-            print(f"  Run {args.id_a} not found", file=sys.stderr); sys.exit(1)
+            where = f" in {db_a}" if db_a else ""
+            print(f"  Run {args.id_a} not found{where}", file=sys.stderr); sys.exit(1)
     else:
         filt_a = {}
         for lv in (args.label_a or []):
             if "=" in lv:
                 k, v = lv.split("=", 1); filt_a[k.strip()] = v.strip()
-        run_a = _best_run(filt_a)
+        run_a = _best_run(filt_a, db_a)
         label_a = " ".join(f"{k}={v}" for k,v in filt_a.items()) or "A"
         if not run_a:
             print(f"  No run matching {filt_a}", file=sys.stderr); sys.exit(1)
 
     # Resolve run B
     if args.id_b:
-        run_b = load_run_by_id(args.id_b)
+        run_b = load_run_by_id(args.id_b, db_b)
         label_b = args.id_b[:8]
         if not run_b:
-            print(f"  Run {args.id_b} not found", file=sys.stderr); sys.exit(1)
+            where = f" in {db_b}" if db_b else ""
+            print(f"  Run {args.id_b} not found{where}", file=sys.stderr); sys.exit(1)
     else:
         filt_b = {}
         for lv in (args.label_b or []):
             if "=" in lv:
                 k, v = lv.split("=", 1); filt_b[k.strip()] = v.strip()
-        run_b = _best_run(filt_b)
+        run_b = _best_run(filt_b, db_b)
         label_b = " ".join(f"{k}={v}" for k,v in filt_b.items()) or "B"
         if not run_b:
             print(f"  No run matching {filt_b}", file=sys.stderr); sys.exit(1)
@@ -1874,10 +1958,25 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Extra label to attach to every ingested run (repeatable)")
     sc.add_argument("--dry-run", action="store_true", help="List what would be ingested without writing")
 
+    # export
+    sc = sub.add_parser("export", help="Export run(s) as a portable JSON blob for cross-machine compare")
+    sc.add_argument("ids", nargs="+", help="Run ID(s) to export")
+    sc.add_argument("--db", metavar="PATH", help="Store to read from (overrides $TOPDOWN_DB_PATH)")
+    sc.add_argument("-o", "--output", metavar="FILE",
+                    help="Write to FILE (default: stdout; '-' = stdout)")
+
+    # import
+    sc = sub.add_parser("import", help="Import run blob(s) from `export` into a store")
+    sc.add_argument("files", nargs="+", help="JSON file(s) produced by `export`")
+    sc.add_argument("--db", metavar="PATH", help="Target store (overrides $TOPDOWN_DB_PATH)")
+    sc.add_argument("--new-id", dest="new_id", action="store_true",
+                    help="Assign a fresh id instead of preserving the original (avoids id collisions)")
+
     # list
     sc = sub.add_parser("list", help="List stored runs")
     sc.add_argument("--label", "-l", action="append", metavar="KEY=VALUE")
     sc.add_argument("--limit", type=int, default=20)
+    sc.add_argument("--db", metavar="PATH", help="Store to read from (overrides $TOPDOWN_DB_PATH)")
 
     # query
     sc = sub.add_parser("query", help="Query stored runs")
@@ -1893,6 +1992,12 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("id_b", nargs="?", help="Run ID for B (or omit and use --label-b)")
     sc.add_argument("--label-a", action="append", metavar="KEY=VALUE", dest="label_a")
     sc.add_argument("--label-b", action="append", metavar="KEY=VALUE", dest="label_b")
+    sc.add_argument("--db", metavar="PATH",
+                    help="SQLite store to load BOTH runs from (overrides $TOPDOWN_DB_PATH)")
+    sc.add_argument("--db-a", dest="db_a", metavar="PATH",
+                    help="Load run A from this store (cross-DB compare; no consolidation needed)")
+    sc.add_argument("--db-b", dest="db_b", metavar="PATH",
+                    help="Load run B from this store (cross-DB compare; pair with --db-a)")
 
     # explain
     sc = sub.add_parser("explain", help="Explain a TMA metric with AMD tuning hints")
@@ -1929,6 +2034,8 @@ def main():
     dispatch = {
         "collect":   cmd_collect,
         "ingest":    cmd_ingest,
+        "export":    cmd_export,
+        "import":    cmd_import,
         "list":      cmd_list,
         "query":     cmd_query,
         "compare":   cmd_compare,
