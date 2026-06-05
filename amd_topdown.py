@@ -449,7 +449,7 @@ def _want_zen4_metrics(family) -> bool:
     sub-splits stay 'n/a' (same as before), never a hard failure."""
     return _is_zen4(family)
 
-def _collect_perf(pid: int | None, duration: float) -> dict:
+def _collect_perf(pid: int | None, duration: float, cpu: str | None = None) -> dict:
     """Run perf stat in attach (-p) or system-wide (-a) mode, return raw event
     dict. The event set is family-gated off the metric YAMLs (Seam 2); Zen5 raw
     sub-split events are added on Family 1Ah for accurate Fetch/Heavy splits."""
@@ -468,7 +468,12 @@ def _collect_perf(pid: int | None, duration: float) -> dict:
         cmd = ["perf", "stat", "-j", "-e", evlist]
         if with_metrics and mgroups:
             cmd += ["-M", ",".join(mgroups)]
-        cmd += (["-p", str(pid)] if pid else ["-a"])
+        if cpu:
+            cmd += ["-C", cpu]
+        elif pid:
+            cmd += ["-p", str(pid)]
+        else:
+            cmd += ["-a"]
         cmd += ["--", "sleep", str(int(duration))]
         return cmd
 
@@ -521,7 +526,12 @@ def _collect_perf(pid: int | None, duration: float) -> dict:
     # as 'n/a' without disturbing the L1/L2/TLB metrics already collected above.
     try:
         l3cmd = ["perf", "stat", "-j", "-M", ",".join(_MEM_METRICS_L3)]
-        l3cmd += (["-p", str(pid)] if pid else ["-a"])
+        if cpu:
+            l3cmd += ["-C", cpu]
+        elif pid:
+            l3cmd += ["-p", str(pid)]
+        else:
+            l3cmd += ["-a"]
         l3cmd += ["--", "sleep", "1"]
         pl = subprocess.run(l3cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, timeout=30)
@@ -1240,10 +1250,13 @@ def cmd_collect(args):
         else:
             print(f"  Warning: process '{args.process}' not found — falling back to system-wide collection")
 
+    cpu = getattr(args, "cpu", None)
+    if cpu:
+        print(f"  Scoping counters to CPU list {cpu} (perf -C)")
     print(f"  Collecting {args.duration}s of TMA data ...")
     t0 = time.time()
     try:
-        raw = _collect_perf(pid, args.duration)
+        raw = _collect_perf(pid, args.duration, cpu=cpu)
     except subprocess.TimeoutExpired:
         print("  Error: perf stat timed out", file=sys.stderr)
         sys.exit(1)
@@ -1834,6 +1847,9 @@ def build_parser() -> argparse.ArgumentParser:
     sc = sub.add_parser("collect", help="Collect a TMA run and store it with labels")
     sc.add_argument("--process", "-p", help="Process name to attach to (e.g. redis-server)")
     sc.add_argument("--duration", "-d", type=float, default=30, help="Collection duration in seconds (default 30)")
+    sc.add_argument("--cpu", "-C", metavar="CPULIST",
+                    help="Restrict counting to a CPU list, e.g. 0-7 or 0,2,4 (perf -C). "
+                         "Overrides --process scope; counts only the named cores system-wide.")
     sc.add_argument("--label", "-l", action="append", metavar="KEY=VALUE",
                     help="Label to attach to the run (repeatable). e.g. --label git_branch=unstable")
 
