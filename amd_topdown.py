@@ -565,7 +565,20 @@ def _mem_metrics_from_raw(raw: dict) -> dict:
     (L2 dTLB misses) collapses by orders of magnitude under huge pages, and the
     2M/1G reload share rises — none of which appears in Retiring%/IPC."""
     def g(name):
-        return raw.get("__M__" + name)
+        # Zen4 (family 19h) emits bare-named absolute counts; Zen5 / Turin
+        # (family 1Ah) emits the same metricgroups with a `_pti` suffix whose
+        # value is a per-1000-instruction RATE, not a count. Prefer the bare
+        # name; otherwise read the `_pti` rate and reconstruct the absolute
+        # count as rate * instructions / 1000. Hit-rate ratios computed below
+        # divide two such counts, so the per-1k normalization cancels cleanly.
+        v = raw.get("__M__" + name)
+        if v is not None:
+            return v
+        v = raw.get("__M__" + name + "_pti")
+        if v is not None:
+            instr = raw.get("instructions", 0) or 0
+            return v * instr / 1000.0
+        return None
 
     out: dict = {}
 
