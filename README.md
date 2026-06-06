@@ -188,44 +188,108 @@ python3 amd_topdown.py collect -C 0-7 -d 25 \
     --label workload=openssl-speed-aes256cbc --label scope=ccd0_cores0-7 --label multi=8
 ```
 
-Each box's run was `export`ed, `import`ed into one store, and compared. Collected
-core-scoped (`perf -C 0-7`) so all 8 OpenSSL processes on the CCD are counted
-regardless of which core each lands on.
+Each box's run was `export`ed, `import`ed into one store, and shown exactly as
+`amd_topdown.py compare` prints it. Collected core-scoped (`perf -C 0-7`) so all
+8 OpenSSL processes on the CCD are counted regardless of which core each lands on.
+The run IDs in the output below map to:
 
-**Top-down funnel (% of pipeline slots)**
+- `0c888d2f` — Genoa, EPYC 9654 (Zen4)
+- `1dff1171` — Genoa-X, EPYC 9684X (Zen4)
+- `d9764b98` — Turin, EPYC 9555 (Zen5)
 
-| Metric              | Genoa — EPYC 9654 (Zen4) | Genoa-X — EPYC 9684X (Zen4) | Turin — EPYC 9555 (Zen5) |
-|---------------------|:------------------------:|:---------------------------:|:------------------------:|
-| Retiring            | 63.3%                    | 63.4%                       | 60.8%                    |
-| Frontend_Bound      | 0.9%                     | 0.9%                        | 1.9%                     |
-| Backend_Bound       | 35.8%                    | 35.8%                       | 70.6% \*                 |
-| Bad_Speculation     | 0.0%                     | 0.0%                        | 0.0%                     |
-| **IPC**             | **3.705**                | **3.710**                   | **3.710**                |
-| Level-1 funnel sum  | 100.0%                   | 100.1%                      | 133.3% \*                |
+**Genoa (A) vs Genoa-X (B)** — same generation, effectively identical funnel
+(working set fits in cache, so Genoa-X's larger L3 doesn't move the slots):
 
-**Memory hierarchy (AMD perf counts, 25s window)**
+```text
 
-| Metric              | Genoa  | Genoa-X | Turin  |
-|---------------------|:------:|:-------:|:------:|
-| L1D fills (misses)  | 62.7M  | 47.8M   | 27.6M  |
-| └ from DRAM         | 1.74M  | 1.20M   | 0.24M  |
-| L2 hit rate (all)   | 94.7%  | 92.7%   | 97.7%  |
-| dTLB page-table walks | 953.8K | 625.4K | 560.5K |
-| dTLB walk rate      | 26.4%  | 49.6%   | 83.9%  |
-| L3 hit rate         | n/a    | n/a     | n/a    |
+  Comparing:  A = 0c888d2f (0c888d2f)
+              B = 1dff1171 (1dff1171)
 
-Reading it: **Genoa and Genoa-X are effectively identical** on this AES workload
-(Retiring ~63%, Backend ~36%, IPC ~3.71) — expected, since both are Zen4 and the
-working set fits in cache, so Genoa-X's larger L3 doesn't change the funnel.
-**Turin (Zen5)** posts the same IPC (3.710) and slightly lower Retiring, with far
-fewer L1D fills and DRAM fetches.
+  Pipeline Slots (100%)                0c888d2f     1dff1171    Delta
+  ─────────────────────────────────────────────────────────────────────────
+  Frontend_Bound                  0.9%      0.9%   -0.1%  
+  ├── Fetch_Latency               0.4%      0.3%   -0.1%  
+  ├── Fetch_Bandwidth             0.6%      0.5%   -0.0%  
+  Retiring                       63.3%     63.4%   ++0.1%  
+  ├── Light_Operations           62.3%     62.4%   ++0.1%  
+  ├── Heavy_Operations            1.0%      1.0%   -0.0%  
+  Backend_Bound                  35.8%     35.8%   ++0.1%  
+  ├── Memory_Bound                0.2%      0.2%   -0.0%  
+  ├── Core_Bound                 35.6%     35.7%   ++0.1%  
+  Bad_Speculation                 0.0%      0.0%   ++0.0%  
+  ├── Branch_Mispredicts          0.0%      0.0%   ++0.0%  
+  ├── Machine_Clears              0.0%      0.0%   ++0.0%  
+  ─────────────────────────────────────────────────────────────────────────
+  Useful work (Retiring)                63.3%     63.4%   +0.1%
+  IPC (instructions/cycle)             3.705     3.710    ×1.00
 
-> \* **Caveat — Turin Backend_Bound is over-scaled.** Its level-1 funnel sums to
-> 133%, not 100%, because `Backend_Bound` is mis-scaled on Zen5 (family 26 / 1Ah)
-> in this build. Treat **Retiring and IPC** as the reliable cross-generation
-> numbers; the Turin `Backend_Bound`/`Core_Bound` figure (and any delta built from
-> it) is not directly comparable to the Zen4 boxes. L3 hit rate reads `n/a` on all
-> three (CCX-scope L3 events not captured in the `-C` config).
+  Memory Hierarchy (AMD perf counts)
+                                 0c888d2f     1dff1171     Factor / Delta
+  ─────────────────────────────────────────────────────────────────────────
+  L1D fills (misses)                 62.68M       47.83M   ÷1  (B fewer)
+  ├── from DRAM                       1.74M        1.20M   ÷1  (B fewer)
+  dTLB page-table walks             953.81K      625.38K   ÷2  (B fewer)
+  TLB reloads 2M (huge)             772.84K      301.86K   ÷3  (B fewer)
+  L2 hit rate (all)                   94.7%        92.7%   -1.9pp
+  L2 hit rate (data)                  93.7%        88.3%   -5.4pp
+  L3 hit rate                          n/a          n/a    n/a
+  dTLB walk rate                      26.4%        49.6%   +23.2pp
+  huge-page reload share              34.0%        36.8%   +2.9pp
+```
+
+**Genoa (A) vs Turin (B)** — Zen4 vs Zen5; same IPC (3.71), slightly lower
+Retiring on Turin, far fewer L1D fills and DRAM fetches:
+
+```text
+
+  Comparing:  A = 0c888d2f (0c888d2f)
+              B = d9764b98 (d9764b98)
+
+  Pipeline Slots (100%)                0c888d2f     d9764b98    Delta
+  ─────────────────────────────────────────────────────────────────────────
+  Frontend_Bound                  0.9%      1.9%   ++0.9%  ← regression
+  ├── Fetch_Latency               0.4%      1.9%   ++1.5%  ← regression
+  ├── Fetch_Bandwidth             0.6%      0.0%   -0.6%  
+  Retiring                       63.3%     60.8%   -2.5%  ← less useful work
+  ├── Light_Operations           62.3%     59.9%   -2.4%  
+  ├── Heavy_Operations            1.0%      1.0%   -0.0%  
+  Backend_Bound                  35.8%     70.6%   ++34.8%  ← regression
+  ├── Memory_Bound                0.2%      0.2%   -0.0%  
+  ├── Core_Bound                 35.6%     70.4%   ++34.8%  
+  Bad_Speculation                 0.0%      0.0%   ++0.0%  
+  ├── Branch_Mispredicts          0.0%      0.0%   -0.0%  
+  ├── Machine_Clears              0.0%      0.0%   ++0.0%  
+  ─────────────────────────────────────────────────────────────────────────
+  Useful work (Retiring)                63.3%     60.8%   -2.5%
+  IPC (instructions/cycle)             3.705     3.710    ×1.00
+
+  Memory Hierarchy (AMD perf counts)
+                                 0c888d2f     d9764b98     Factor / Delta
+  ─────────────────────────────────────────────────────────────────────────
+  L1D fills (misses)                 62.68M       27.65M   ÷2  (B fewer)
+  ├── from DRAM                       1.74M      241.17K   ÷7  (B fewer)
+  dTLB page-table walks             953.81K      560.55K   ÷2  (B fewer)
+  TLB reloads 2M (huge)             772.84K       82.44K   ÷9  (B fewer)
+  L2 hit rate (all)                   94.7%        97.7%   +3.1pp
+  L2 hit rate (data)                  93.7%        88.2%   -5.5pp
+  L3 hit rate                          n/a          n/a    n/a
+  dTLB walk rate                      26.4%        83.9%   +57.5pp
+  huge-page reload share              34.0%        50.6%   +16.6pp
+
+  ✗ Regressions in B:
+    Frontend_Bound: +0.9%
+    ├── Fetch_Latency: +1.5%
+    Retiring: -2.5%
+    Backend_Bound: +34.8%
+```
+
+> **Caveat — Turin Backend_Bound is over-scaled.** Its level-1 funnel sums to
+> ~133%, not 100% (`Backend_Bound` 70.6% in its own run), because that metric is
+> mis-scaled on Zen5 (family 26 / 1Ah) in this build. So the `Backend_Bound:
+> +34.8%` regression line above is a scaling artifact, not a real backend
+> difference. Treat **Retiring and IPC** as the reliable cross-generation
+> numbers; Genoa and Genoa-X (both Zen4) sum cleanly to ~100%. L3 hit rate reads
+> `n/a` on all three (CCX-scope L3 events not captured in the `-C` config).
 
 ### Profiling a workload (bare-metal or cloud VM)
 
