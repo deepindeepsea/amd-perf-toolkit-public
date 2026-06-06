@@ -586,13 +586,18 @@ def _collect_perf(pid: int | None, duration: float, cpu: str | None = None) -> d
         pass
     return raw
 
-def _find_pid(process_name: str) -> int | None:
+def _find_pids(process_name: str) -> list[int]:
+    """Return ALL PIDs whose exact name matches `process_name` (pgrep -x)."""
     try:
         out = subprocess.check_output(["pgrep", "-x", process_name], text=True)
-        pids = [int(x) for x in out.split() if x.strip()]
-        return pids[0] if pids else None
+        return [int(x) for x in out.split() if x.strip()]
     except Exception:
-        return None
+        return []
+
+
+def _find_pid(process_name: str) -> int | None:
+    pids = _find_pids(process_name)
+    return pids[0] if pids else None
 
 def _mem_metrics_from_raw(raw: dict) -> dict:
     """Derive the memory-hierarchy view (L1D / L2 / dTLB, best-effort L3) from
@@ -1301,9 +1306,19 @@ def cmd_collect(args):
 
     pid = None
     if args.process:
-        pid = _find_pid(args.process)
+        pids = _find_pids(args.process)
+        pid = pids[0] if pids else None
         if pid:
             print(f"  Attaching to {args.process} (PID {pid})")
+            if len(pids) > 1:
+                others = ", ".join(str(p) for p in pids[1:])
+                print(f"  Warning: {len(pids)} processes named '{args.process}' are running "
+                      f"(PIDs {pid}, {others}).")
+                print(f"           --process attaches perf -p to ONLY PID {pid} (and its threads); "
+                      f"the other process(es) are NOT counted.")
+                print(f"           If this is meant to be ONE multithreaded process, ignore this. "
+                      f"For multiple SEPARATE processes, re-run with --cpu <list> (e.g. -C 0-7) "
+                      f"to count those cores regardless of process.")
         else:
             print(f"  Warning: process '{args.process}' not found — falling back to system-wide collection")
 

@@ -57,6 +57,37 @@ That 12-character hex string is the **run ID** — that is where IDs like
 `cc1cb38067c0` and `0d63019dd85d` come from. You pass two of them to `compare`.
 You can always re-list them later with `list`.
 
+#### `--process` vs `--cpu` — which scope to use
+
+`collect` can attach the counters two different ways, and the right one depends
+on whether your workload is **one multithreaded process** or **several separate
+processes**:
+
+- **`--process NAME`** resolves the name with `pgrep -x` and attaches `perf -p`
+  to a single PID. That PID **and all of its threads** are counted while they run
+  (the kernel saves/restores the counts across context switches and follows the
+  threads across cores). This is correct for **one multithreaded process**.
+  Caveat: if several processes share the name, `--process` attaches to only the
+  **first** PID — the others are not counted. `collect` now prints a warning when
+  it sees more than one match.
+- **`--cpu LIST`** (e.g. `-C 0-7`) attaches `perf -C` to a fixed set of cores and
+  counts **everything that runs on those cores, regardless of process** (and
+  regardless of whether your task is context-switched out). This is the right mode
+  for **multiple separate processes**, or any time you want a clean per-core view.
+  Pin the work first (e.g. `taskset -c 0-7 ...`).
+
+Quick way to tell which you have:
+
+```bash
+pgrep -x mybench          # one PID -> single process; several PIDs -> multiple processes
+cat /proc/<pid>/status | grep Threads   # thread count of a single process
+ps -eLf | grep mybench    # PID repeats with different LWP = one process, many threads
+```
+
+Rule of thumb: if `pgrep -x` returns more than one PID, prefer `--cpu 0-7` over
+`--process`.
+
+
 #### Worked example — THP off vs THP on (A/B)
 
 This reproduces the comparison in `MEMORY_HIERARCHY.md`. The workload is a 2 GiB
@@ -146,6 +177,55 @@ python3 amd_topdown.py compare <id_a> <id_b> \
 `--db` sets the store for both runs; `--db-a` / `--db-b` override it per side.
 `list` also accepts `--db` so you can inspect any store without exporting
 `TOPDOWN_DB_PATH`.
+
+### Cross-box snapshot — identical workload on three EPYC generations
+
+Same workload, unchanged across all three boxes: one CCD loaded with
+
+```bash
+taskset -c 0-7 openssl speed -multi 8 -seconds 45 aes-256-cbc      # 8 procs, cores 0-7
+python3 amd_topdown.py collect -C 0-7 -d 25 \
+    --label workload=openssl-speed-aes256cbc --label scope=ccd0_cores0-7 --label multi=8
+```
+
+Each box's run was `export`ed, `import`ed into one store, and compared. Collected
+core-scoped (`perf -C 0-7`) so all 8 OpenSSL processes on the CCD are counted
+regardless of which core each lands on.
+
+**Top-down funnel (% of pipeline slots)**
+
+| Metric              | Genoa — EPYC 9654 (Zen4) | Genoa-X — EPYC 9684X (Zen4) | Turin — EPYC 9555 (Zen5) |
+|---------------------|:------------------------:|:---------------------------:|:------------------------:|
+| Retiring            | 63.3%                    | 63.4%                       | 60.8%                    |
+| Frontend_Bound      | 0.9%                     | 0.9%                        | 1.9%                     |
+| Backend_Bound       | 35.8%                    | 35.8%                       | 70.6% \*                 |
+| Bad_Speculation     | 0.0%                     | 0.0%                        | 0.0%                     |
+| **IPC**             | **3.705**                | **3.710**                   | **3.710**                |
+| Level-1 funnel sum  | 100.0%                   | 100.1%                      | 133.3% \*                |
+
+**Memory hierarchy (AMD perf counts, 25s window)**
+
+| Metric              | Genoa  | Genoa-X | Turin  |
+|---------------------|:------:|:-------:|:------:|
+| L1D fills (misses)  | 62.7M  | 47.8M   | 27.6M  |
+| └ from DRAM         | 1.74M  | 1.20M   | 0.24M  |
+| L2 hit rate (all)   | 94.7%  | 92.7%   | 97.7%  |
+| dTLB page-table walks | 953.8K | 625.4K | 560.5K |
+| dTLB walk rate      | 26.4%  | 49.6%   | 83.9%  |
+| L3 hit rate         | n/a    | n/a     | n/a    |
+
+Reading it: **Genoa and Genoa-X are effectively identical** on this AES workload
+(Retiring ~63%, Backend ~36%, IPC ~3.71) — expected, since both are Zen4 and the
+working set fits in cache, so Genoa-X's larger L3 doesn't change the funnel.
+**Turin (Zen5)** posts the same IPC (3.710) and slightly lower Retiring, with far
+fewer L1D fills and DRAM fetches.
+
+> \* **Caveat — Turin Backend_Bound is over-scaled.** Its level-1 funnel sums to
+> 133%, not 100%, because `Backend_Bound` is mis-scaled on Zen5 (family 26 / 1Ah)
+> in this build. Treat **Retiring and IPC** as the reliable cross-generation
+> numbers; the Turin `Backend_Bound`/`Core_Bound` figure (and any delta built from
+> it) is not directly comparable to the Zen4 boxes. L3 hit rate reads `n/a` on all
+> three (CCX-scope L3 events not captured in the `-C` config).
 
 ### Profiling a workload (bare-metal or cloud VM)
 
