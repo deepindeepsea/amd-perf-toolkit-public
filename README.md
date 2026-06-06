@@ -36,6 +36,8 @@ for what each counter means and how to read it.
 | `list` | List stored runs (run ID, label, timestamp) |
 | `query` | Show the funnel + memory-hierarchy panel for one run (select by `--label`) |
 | `compare` | Show two runs side by side (`compare <run_a_id> <run_b_id>`) |
+| `export` | Dump one or more runs to a portable JSON file (self-describing: host, CPU, metrics, labels) |
+| `import` | Load runs from an `export` JSON into a store (idempotent; `--new-id` to avoid ID clashes) |
 
 The database location is set with `TOPDOWN_DB_PATH` (defaults to a temp path).
 Use the same value for every command so they share one store.
@@ -98,6 +100,52 @@ because the workload is DRAM-latency-bound by construction. The win shows up onl
 in the memory-hierarchy block: dTLB page-table walks collapse and reloads shift
 almost entirely onto huge pages. That blind-spot is exactly why the
 memory-hierarchy counters exist.
+
+### Sharing runs across machines (`export` / `import`)
+
+Every run row is fully self-describing — it carries its own host, CPU model, CPU
+family, metrics, labels, and raw event counts — so a run collected on one box can
+be moved to another and compared without re-collecting. Use this to gather runs
+from several cloud instances or lab boxes into one place.
+
+```bash
+# On each machine: export one or more runs to a portable JSON file
+python3 amd_topdown.py export 4e971ffd5c6c -o genoa.json
+python3 amd_topdown.py export <id1> <id2> -o many.json    # several runs, one file
+python3 amd_topdown.py export <id> --db /path/to/data.db  # read from a specific store
+python3 amd_topdown.py export <id>                        # no -o => JSON to stdout
+
+# Copy the JSON files to one machine (scp/rsync/etc.), then import them
+python3 amd_topdown.py import genoa.json turin.json genoax.json
+#   ✓ imported run 4e971ffd5c6c  (ruby-942e, fam 25)
+#   ✓ imported run 7a4e7cd7529e  (purico-f1d3, fam 26)
+#   ✓ imported run 3823cae3d3b6  (host-ruby-de91, fam 25)
+#   Imported 3 run(s).
+```
+
+`import` is idempotent: it preserves the original run ID, host, CPU, and timestamp
+(`INSERT OR REPLACE`), so re-importing the same file just overwrites in place. Pass
+`--new-id` to assign a fresh ID instead — useful when two machines happen to share
+an ID, or when you want to keep a run twice. Both `export` and `import` accept
+`--db PATH` to target a specific store instead of `$TOPDOWN_DB_PATH`.
+
+#### Comparing runs that live in different databases
+
+You don't have to consolidate at all — `compare` can pull each run from a
+different store:
+
+```bash
+# Both runs from one shared store
+python3 amd_topdown.py compare <id_a> <id_b> --db /path/to/all.db
+
+# Each run from its own store (no consolidation needed)
+python3 amd_topdown.py compare <id_a> <id_b> \
+    --db-a /path/to/genoa.db --db-b /path/to/turin.db
+```
+
+`--db` sets the store for both runs; `--db-a` / `--db-b` override it per side.
+`list` also accepts `--db` so you can inspect any store without exporting
+`TOPDOWN_DB_PATH`.
 
 ### Profiling a workload (bare-metal or cloud VM)
 
