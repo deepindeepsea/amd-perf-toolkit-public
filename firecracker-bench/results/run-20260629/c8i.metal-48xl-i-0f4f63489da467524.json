@@ -1,0 +1,78 @@
+{
+  "schema": "firecracker-bench/v1",
+  "host": {
+  "instance_type": "c8i.metal-48xl",
+  "availability_zone": "us-west-2a",
+  "cpu_model": "Intel(R) Xeon(R) 6975P-C",
+  "cpu_vendor": "GenuineIntel",
+  "sockets": 1,
+  "cores_per_socket": 96,
+  "threads_total": 192,
+  "numa_nodes": 3,
+  "mem_total_kb": 395972340,
+  "thp_enabled": "madvise",
+  "kernel": "6.8.0-1057-aws",
+  "fc_version": "v1.16.0",
+  "timestamp_utc": "2026-06-29T05:14:19Z"
+},
+  "results": {
+    "boot_latency": {
+  "metric": "boot_latency_ms",
+  "mode": "fast_init",
+  "requested": 50,
+  "succeeded": 50,
+  "min": 166.9,
+  "p50": 175.850,
+  "p90": 179.300,
+  "p99": 181.210,
+  "max": 181.7,
+  "mean": 175.360,
+  "samples": [179.5,175.7,177.9,175.3,170.3,177.1,177.8,174.8,180.7,176.7,173.4,172.4,171.5,172.4,175.0,166.9,177.1,178.9,171.1,178.4,179.3,169.0,174.5,177.9,176.7,176.2,176.5,177.9,176.3,176.0,174.7,170.2,178.4,180.0,173.3,172.0,175.3,175.1,176.4,174.0,170.3,181.7,172.9,175.3,178.3,179.3,170.5,176.0,174.5,176.6]
+},
+    "density": {
+  "metric": "density",
+  "per_vm_mem_mib": 256,
+  "vcpu_oversub": 1,
+  "ram_safety": 0.80,
+  "host_threads": 192,
+  "host_mem_mib": 386691,
+  "ram_cap": 1208,
+  "cpu_cap": 192,
+  "target": 192,
+  "launched": 192,
+  "ready": 192,
+  "fleet_boot_seconds": 1.14,
+  "vms_per_core": 1.00,
+  "vms_per_gib": 0.51
+},
+    "net_iperf3": {
+  "metric": "net_iperf3",
+  "vcpus": 2,
+  "mem_mib": 1024,
+  "streams": 4,
+  "duration_s": 10,
+  "fwd_gbps": 25.952,
+  "rev_gbps": 23.711,
+  "parallel_gbps": 28.418
+},
+    "block_fio": {
+  "metric": "block_fio",
+  "vcpus": 2,
+  "mem_mib": 1024,
+  "file_size": "512M",
+  "runtime_s": 15,
+  "randread_iops": 123166,
+  "randwrite_iops": 90819,
+  "seqread_mibps": 7312.5
+},
+    "guest_compute": {
+  "metric": "guest_compute",
+  "vcpus": 8,
+  "mem_mib": 2048,
+  "aes256_1t_mibps": 1318.5,
+  "aes256_nt_mibps": 10544.2,
+  "matrixprod_1t_bogops": 491.43,
+  "matrixprod_nt_bogops": 3913.16
+}
+  }
+}

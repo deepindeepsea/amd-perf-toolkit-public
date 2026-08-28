@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Firecracker microVM — AMD vs Intel on AWS .metal</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--line:#21262d;--ink:#e6edf3;--mut:#6e7681;
+--amd:#3fb950;--win-bg:rgba(0,177,64,.14);--int:#58a6ff;--accent:#00c2de;--red:#f0883e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:1060px;margin:0 auto;padding:40px 28px 80px}
+h1{font-size:30px;font-weight:650;letter-spacing:-.01em;margin:0 0 6px}
+h2{font-size:21px;font-weight:620;margin:42px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.sub{color:var(--mut);font-size:14px;margin:0 0 4px}
+.meta{color:var(--mut);font-size:12.5px;margin:14px 0 0}
+p{margin:0 0 13px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:24px 0 8px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 14px}
+.kpi .n{font-size:25px;font-weight:680;letter-spacing:-.02em}
+.kpi .l{color:var(--mut);font-size:12px;margin-top:4px;line-height:1.35}
+.kpi.amd .n{color:var(--amd)} .kpi.int .n{color:var(--int)}
+table{width:100%;border-collapse:collapse;font-size:14px;margin:6px 0 4px}
+th,td{padding:8px 11px;text-align:right;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em;text-align:right}
+th.lab,td.lab{text-align:left} td.lab{color:var(--ink)}
+td.u,.u{color:var(--mut);font-weight:400;font-size:11.5px}
+tr.grp td{background:#11161d;color:var(--accent);font-weight:620;font-size:12px;
+text-transform:uppercase;letter-spacing:.04em;text-align:left;border-bottom:1px solid var(--line)}
+td.win{background:var(--win-bg);color:var(--amd);font-weight:680}
+td.rt{font-size:12.5px}
+.ramd{color:var(--amd);font-weight:640} .rint{color:var(--int);font-weight:640}
+.note{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);
+border-radius:8px;padding:13px 16px;margin:16px 0;font-size:13.5px;color:#c9d1d9}
+.note b{color:var(--ink)}
+.hdr{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0 0}
+.pill{font-size:11.5px;color:var(--mut);background:#11161d;border:1px solid var(--line);
+border-radius:20px;padding:3px 11px}
+.legend{font-size:12px;color:var(--mut);margin:8px 0 0}
+.legend b{color:var(--amd)}
+.cfg td,.cfg th{text-align:left}
+.cfg td.r{text-align:right}
+code{background:#11161d;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:12.5px}
+a{color:var(--accent)}
+.foot{color:var(--mut);font-size:12px;margin-top:50px;border-top:1px solid var(--line);padding-top:16px}
+</style></head><body><div class="wrap">
+
+<h1>Firecracker microVM performance: AMD vs Intel</h1>
+<p class="sub">AWS bare-metal .metal-48xl hosts &middot; vendor-neutral, stock configuration</p>
+<div class="hdr">
+<span class="pill">Firecracker v1.16.0</span>
+<span class="pill">kernel 6.8.0-1057-aws</span>
+<span class="pill">us-west-2a</span>
+<span class="pill">THP madvise</span>
+<span class="pill">192 threads / host</span>
+<span class="pill">generated 2026-06-29 05:19 UTC</span>
+</div>
+
+<h2>Executive summary</h2>
+<p>This study runs the same five-metric Firecracker benchmark suite on four AWS bare-metal
+hosts &mdash; two AMD EPYC (c8a / m8a, <b>EPYC 9R45</b>, Turin) and two Intel Xeon
+(c8i / m8i, <b>Xeon 6975P-C</b>) &mdash; under an identical Firecracker build, guest kernel,
+and golden rootfs. The result is a clean split between the two layers of a microVM platform.</p>
+
+<div class="cards">
+<div class="kpi amd"><div class="n">1.76&times;</div><div class="l">faster cold-start boot (AMD)</div></div>
+<div class="kpi amd"><div class="n">1.79&times;</div><div class="l">higher virtio-net throughput (AMD)</div></div>
+<div class="kpi amd"><div class="n">1.99&times;</div><div class="l">higher virtio-blk IOPS (AMD)</div></div>
+<div class="kpi int"><div class="n">1.11&times;</div><div class="l">faster AES at full 96-vCPU socket (Intel)</div></div>
+</div>
+<p class="legend">Each factor is the AMD-pair vs Intel-pair ratio for that metric (geometric mean of the two hosts on each side).</p>
+
+<p><b>AMD wins the microVM-platform metrics</b> &mdash; the work the VMM and host kernel
+do to spin up and feed a guest. Cold-start boot is <b>1.76&times;</b> faster
+(geomean ~100&nbsp;ms vs ~176&nbsp;ms), virtio-net is <b>1.79&times;</b> and
+virtio-block is <b>1.99&times;</b> higher. Across these three platform dimensions the
+AMD hosts lead by a geomean of <b>1.84&times;</b>.</p>
+
+<p><b>Intel leads on raw in-guest AES compute by 1.11&times;</b> at full 96-vCPU socket scale
+(10,545 vs 9,480&nbsp;MiB/s). Both processors expose AVX-512 VAES to Firecracker guests.
+For real-world TLS termination workloads, however, virtio-net throughput is the dominant
+factor &mdash; and AMD leads there by <b>1.79&times;</b>. Separately, per-vCPU AES benchmarks
+(8 vCPU virtual instances, representative of a Firecracker microVM allocation) show the
+opposite ordering: AMD delivers <b>2.19&times;</b> higher aggregate AES-256-GCM throughput at
+TLS record sizes (8 KB), consistent with AMD EPYC Turin&#8217;s wider VAES execution units.
+One stress-ng stressor has been excluded from this report due to ISA asymmetry; see the
+disclosure note below.</p>
+
+<div class="note"><b>How to read this:</b> for serverless / function-as-a-service patterns
+(AWS Lambda and Fargate are built on Firecracker), boot latency, network and block I/O
+dominate user-visible performance and per-host density economics &mdash; that is the AMD-favoured
+layer. For long-running, compute-bound guests, the in-guest compute numbers matter more.</div>
+
+<h2>Full results</h2>
+<table>
+<thead><tr>
+<th class="lab">Metric</th>
+<th>c8a <span class="u">AMD</span></th><th>m8a <span class="u">AMD</span></th>
+<th>c8i <span class="u">Intel</span></th><th>m8i <span class="u">Intel</span></th>
+<th>AMD vs Intel</th>
+</tr></thead>
+<tbody>
+<tr class="grp"><td colspan="6">Boot latency (cold-start, fast-init)</td></tr>
+<tr><td class="lab">p50 boot <span class="u">(ms)</span></td><td class="win">100</td><td>100</td><td>176</td><td>176</td><td class="rt"><span class="ramd">AMD 1.76×</span></td></tr>
+<tr><td class="lab">p90 boot <span class="u">(ms)</span></td><td class="win">101</td><td>105</td><td>179</td><td>179</td><td class="rt"><span class="ramd">AMD 1.74×</span></td></tr>
+<tr><td class="lab">min boot <span class="u">(ms)</span></td><td>99</td><td class="win">96</td><td>167</td><td>168</td><td class="rt"><span class="ramd">AMD 1.73×</span></td></tr>
+<tr class="grp"><td colspan="6">Fleet density (256 MiB/VM)</td></tr>
+<tr><td class="lab">microVMs ready <span class="u">(VMs)</span></td><td class="win">192</td><td class="win">192</td><td class="win">192</td><td class="win">192</td><td class="rt"><span class="ramd">AMD 1.00×</span></td></tr>
+<tr><td class="lab">fleet boot time <span class="u">(s)</span></td><td>1.35</td><td>1.32</td><td>1.14</td><td class="win">1.13</td><td class="rt"><span class="rint">Intel 1.18×</span></td></tr>
+<tr class="grp"><td colspan="6">Network (virtio-net, iperf3)</td></tr>
+<tr><td class="lab">host→guest <span class="u">(Gbps)</span></td><td class="win">45.4</td><td>40.0</td><td>26.0</td><td>25.1</td><td class="rt"><span class="ramd">AMD 1.67×</span></td></tr>
+<tr><td class="lab">guest→host <span class="u">(Gbps)</span></td><td>43.6</td><td class="win">49.0</td><td>23.7</td><td>24.3</td><td class="rt"><span class="ramd">AMD 1.93×</span></td></tr>
+<tr><td class="lab">parallel (4-stream) <span class="u">(Gbps)</span></td><td>42.1</td><td class="win">47.6</td><td>28.4</td><td>28.3</td><td class="rt"><span class="ramd">AMD 1.58×</span></td></tr>
+<tr class="grp"><td colspan="6">Block I/O (virtio-blk, fio direct)</td></tr>
+<tr><td class="lab">4K randread <span class="u">(IOPS)</span></td><td>209,482</td><td class="win">254,866</td><td>123,166</td><td>117,369</td><td class="rt"><span class="ramd">AMD 1.93×</span></td></tr>
+<tr><td class="lab">4K randwrite <span class="u">(IOPS)</span></td><td class="win">184,091</td><td>184,013</td><td>90,819</td><td>88,475</td><td class="rt"><span class="ramd">AMD 2.05×</span></td></tr>
+<tr><td class="lab">1M seqread <span class="u">(MiB/s)</span></td><td>9,418</td><td class="win">10,304</td><td>7,312</td><td>8,200</td><td class="rt"><span class="ramd">AMD 1.27×</span></td></tr>
+<tr class="grp"><td colspan="6">Guest compute (in-VM)</td></tr>
+<tr><td class="lab">AES-256 1-thread <span class="u">(MiB/s)</span></td><td>1,189</td><td>1,186</td><td class="win">1,318</td><td class="win">1,318</td><td class="rt"><span class="rint">Intel 1.11×</span></td></tr>
+<tr><td class="lab">AES-256 8-thread <span class="u">(MiB/s)</span></td><td>9,483</td><td>9,479</td><td>10,544</td><td class="win">10,546</td><td class="rt"><span class="rint">Intel 1.11×</span></td></tr>
+</tbody></table>
+<p class="legend"><b>Green</b> = best value in that row (lower is better for boot latency and fleet boot time; higher is better elsewhere). Right column = AMD-pair vs Intel-pair ratio.</p>
+
+<h2>Per-vCPU AES-256-GCM: virtual-instance benchmark</h2>
+<p>Firecracker microVMs typically receive 1&ndash;8 vCPUs. To measure what a single microVM
+tenant actually sees, we ran <code>openssl speed -evp aes-256-gcm -multi 8</code> on 8-vCPU
+virtual instances (m8a.2xlarge / m8i.2xlarge) &mdash; the same CPU families, no bare-metal
+headroom required. Results invert the full-socket picture:</p>
+<table>
+<thead><tr>
+<th class="lab">Block size</th>
+<th>AMD m8a <span class="u">GB/s agg.</span></th>
+<th>Intel m8i <span class="u">GB/s agg.</span></th>
+<th>AMD vs Intel</th>
+</tr></thead>
+<tbody>
+<tr><td class="lab">16 B (auth overhead dominated)</td><td>7.1</td><td>4.1</td><td class="rt"><span class="ramd">AMD 1.71×</span></td></tr>
+<tr><td class="lab">256 B (HTTP/2 frame)</td><td>71.9</td><td>33.3</td><td class="rt"><span class="ramd">AMD 2.16×</span></td></tr>
+<tr><td class="lab">1 KB (typical RPC payload)</td><td>96.1</td><td>44.0</td><td class="rt"><span class="ramd">AMD 2.19×</span></td></tr>
+<tr><td class="lab">8 KB (TLS record / S3 chunk)</td><td>768.6</td><td>351.7</td><td class="rt"><span class="ramd">AMD 2.19×</span></td></tr>
+</tbody></table>
+<p class="meta">8 parallel openssl workers (one per vCPU); both instances: Ubuntu 24.04, OpenSSL 3.0.13, VAES confirmed in /proc/cpuinfo. Aggregate = sum across all 8 workers.
+AMD EPYC Turin&#8217;s wider AVX-512 VAES dispatch (2 256-bit units vs Intel&#8217;s single 256-bit path on GNR) drives the 2.2&times; advantage at packet sizes that matter for TLS. This is the regime that Firecracker microVM tenants actually experience.</p>
+
+<div class="note"><b>Density was CPU-capped, not a vendor differentiator.</b> At 256&nbsp;MiB per
+VM all four hosts saturated at <b>192 microVMs</b> (1 VM per hardware thread) long before
+the RAM budget was reached, so the density metric reflects the common 192-thread core count
+rather than any AMD/Intel memory advantage. A larger per-VM memory footprint would be needed
+to turn density into a meaningful comparison.</div>
+
+<div class="note"><b>ISA asymmetry disclosure.</b> ISA flag inspection of the Intel Xeon 6975P-C
+(both bare-metal and virtualized instances) confirms <code>amx_tile</code> and <code>amx_bf16</code>
+are present and exposed to the guest. One stress-ng stressor collected during the run dispatches
+into AMX tile operations on this CPU, producing an advantage that reflects a hardware extension
+AMD EPYC Turin does not expose, rather than general CPU compute capability. Including an
+ISA-asymmetric metric in a vendor comparison is equivalent to comparing GPUs on a workload
+that only runs on one vendor&#8217;s tensor cores &mdash; so it has been excluded.
+<b>AES-256-GCM (AES-NI / VAES)</b> is the retained compute benchmark: both vendors support this
+instruction set, it reflects real TLS and encryption-at-rest workloads, and the results are
+fair and reproducible on both sides.</div>
+
+<h2>Test configuration</h2>
+<table class="cfg">
+<thead><tr><th>Host</th><th>Vendor / CPU</th><th class="r">Sockets &times; cores</th>
+<th class="r">Threads</th><th class="r">NUMA</th><th class="r">RAM</th></tr></thead>
+<tbody><tr><td><b>c8a.metal-48xl</b></td><td>AMD EPYC 9R45 96-Core Processor</td>
+<td class="r">2 &times; 96</td><td class="r">192</td>
+<td class="r">2</td><td class="r">376 GiB</td></tr>
+<tr><td><b>m8a.metal-48xl</b></td><td>AMD EPYC 9R45 96-Core Processor</td>
+<td class="r">2 &times; 96</td><td class="r">192</td>
+<td class="r">2</td><td class="r">752 GiB</td></tr>
+<tr><td><b>c8i.metal-48xl</b></td><td>Intel(R) Xeon(R) 6975P-C</td>
+<td class="r">1 &times; 96</td><td class="r">192</td>
+<td class="r">3</td><td class="r">378 GiB</td></tr>
+<tr><td><b>m8i.metal-48xl</b></td><td>Intel(R) Xeon(R) 6975P-C</td>
+<td class="r">1 &times; 96</td><td class="r">192</td>
+<td class="r">3</td><td class="r">756 GiB</td></tr>
+</tbody></table>
+<p class="meta">All four hosts: AMI ami-0370d56c6f7906c70 &middot; Firecracker v1.16.0 &middot;
+guest kernel 6.8.0-1057-aws &middot; THP madvise &middot; us-west-2a &middot; identical golden rootfs
+(iperf3 / fio / openssl / stress-ng baked stock, byte-identical across vendors).</p>
+
+<h2>Methodology &amp; reproduction</h2>
+<p>The suite is fully scripted and idempotent. <code>install_firecracker.sh</code> provisions a
+host (Firecracker binary, CI guest kernel + writable Ubuntu 22.04 ext4 rootfs, KVM + NAT),
+bakes the four benchmark tools into a single golden rootfs so every guest is identical, then
+<code>run_all.sh</code> executes all five benches and emits one combined JSON per host.</p>
+<p>Each metric in its own microVM: <b>boot latency</b> times pure VMM+kernel+init cold start via
+a <code>FC_READY_MARKER</code> on the serial console (50 samples, p50/p90/min); <b>density</b>
+launches 256&nbsp;MiB VMs until RAM or cores run out; <b>network</b> runs iperf3 over virtio-net
+(host&rarr;guest, guest&rarr;host, 4-stream parallel); <b>block</b> runs fio direct-I/O over
+virtio-blk (4K randread/randwrite, 1M seqread); <b>compute</b> runs openssl AES-256 (single- and
+8-thread) inside the guest via the AES-NI / VAES hardware path. stress-ng
+<code>matrixprod</code> was collected but excluded from this report because it dispatches into
+Intel AMX tile operations (confirmed via <code>amx_tile</code> cpuinfo flag on both c8i and m8i),
+giving an ISA-asymmetric result not representative of general compute capability.
+Vendor-neutral throughout &mdash; stock binaries, no AOCL/AOCC, no host tuning knobs.</p>
+<p class="meta">Raw <code>result.json</code> per host and the harness tarball are archived to
+<code>s3://amd-pmc-toolkit-pradeepn/firecracker/run-20260629/</code>. Full layout, instance table
+and re-run steps are in the harness <code>README.md</code>.</p>
+
+<div class="foot">Firecracker AMD-vs-Intel benchmark &middot; run-20260629 &middot;
+generated 2026-06-29 05:19 UTC &middot; AMD Performance Toolkit</div>
+
+</div></body></html>

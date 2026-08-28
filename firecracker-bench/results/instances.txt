@@ -1,0 +1,5 @@
+instance_id type vendor
+i-03715154062628431 c8a.metal-48xl amd
+i-0e3981d986ced8234 m8a.metal-48xl amd
+i-0f4f63489da467524 c8i.metal-48xl intel
+i-09de4ef7e0ce8c641 m8i.metal-48xl intel

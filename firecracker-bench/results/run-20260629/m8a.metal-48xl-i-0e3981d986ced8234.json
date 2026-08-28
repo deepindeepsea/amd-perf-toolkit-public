@@ -1,0 +1,78 @@
+{
+  "schema": "firecracker-bench/v1",
+  "host": {
+  "instance_type": "m8a.metal-48xl",
+  "availability_zone": "us-west-2a",
+  "cpu_model": "AMD EPYC 9R45 96-Core Processor",
+  "cpu_vendor": "AuthenticAMD",
+  "sockets": 2,
+  "cores_per_socket": 96,
+  "threads_total": 192,
+  "numa_nodes": 2,
+  "mem_total_kb": 789028556,
+  "thp_enabled": "madvise",
+  "kernel": "6.8.0-1057-aws",
+  "fc_version": "v1.16.0",
+  "timestamp_utc": "2026-06-29T05:14:15Z"
+},
+  "results": {
+    "boot_latency": {
+  "metric": "boot_latency_ms",
+  "mode": "fast_init",
+  "requested": 50,
+  "succeeded": 50,
+  "min": 95.5,
+  "p50": 100.500,
+  "p90": 104.670,
+  "p99": 107.904,
+  "max": 108.1,
+  "mean": 101.220,
+  "samples": [102.8,106.7,101.3,101.0,107.7,99.6,99.7,100.6,101.2,99.7,102.3,103.5,99.7,99.7,102.7,99.8,100.7,105.3,101.7,99.8,99.6,99.2,98.9,95.5,102.1,100.6,99.5,100.0,100.0,104.6,101.1,99.8,100.4,100.7,106.4,100.6,99.7,100.0,100.1,99.7,100.4,101.4,101.5,101.6,100.1,100.4,100.1,100.4,103.0,108.1]
+},
+    "density": {
+  "metric": "density",
+  "per_vm_mem_mib": 256,
+  "vcpu_oversub": 1,
+  "ram_safety": 0.80,
+  "host_threads": 192,
+  "host_mem_mib": 770535,
+  "ram_cap": 2407,
+  "cpu_cap": 192,
+  "target": 192,
+  "launched": 192,
+  "ready": 192,
+  "fleet_boot_seconds": 1.32,
+  "vms_per_core": 1.00,
+  "vms_per_gib": 0.26
+},
+    "net_iperf3": {
+  "metric": "net_iperf3",
+  "vcpus": 2,
+  "mem_mib": 1024,
+  "streams": 4,
+  "duration_s": 10,
+  "fwd_gbps": 39.998,
+  "rev_gbps": 48.990,
+  "parallel_gbps": 47.597
+},
+    "block_fio": {
+  "metric": "block_fio",
+  "vcpus": 2,
+  "mem_mib": 1024,
+  "file_size": "512M",
+  "runtime_s": 15,
+  "randread_iops": 254866,
+  "randwrite_iops": 184013,
+  "seqread_mibps": 10304.3
+},
+    "guest_compute": {
+  "metric": "guest_compute",
+  "vcpus": 8,
+  "mem_mib": 2048,
+  "aes256_1t_mibps": 1186.3,
+  "aes256_nt_mibps": 9478.8,
+  "matrixprod_1t_bogops": 254.80,
+  "matrixprod_nt_bogops": 2032.51
+}
+  }
+}
